@@ -1,4 +1,3 @@
-# sql.py
 QUERY_IMPORTACION = """
 SELECT 
     DI.Referencia,
@@ -38,7 +37,7 @@ INNER JOIN (
 
 def obtener_consulta_importacion():
     """
-    Retorna la consulta SQL para uso en la importación.
+    Retorna la consulta SQL para la importación de datos.
     """
     return QUERY_IMPORTACION
 
