@@ -4,13 +4,11 @@ from PyQt5.QtWidgets import (
     QHBoxLayout, QVBoxLayout, QLabel, QMessageBox
 )
 from PyQt5.QtCore import Qt
-import logging
+
 # Importamos la lógica desde el módulo dedicado.
 from connect.instancia import get_available_sql_servers, get_default_username, load_connection_config, save_connection_config
 # Importa la función de estilos desde la carpeta style.
 from style.instanciaStyle import get_instancia_stylesheet
-
-logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
 
 class ConnectionConfigDialog(QDialog):
     """
@@ -116,7 +114,6 @@ class ConnectionConfigDialog(QDialog):
         self.server_name_combo.addItems(self.available_instances)
         if self.available_instances:
             self.server_name_combo.setCurrentIndex(0)
-        logging.debug("Instancias actualizadas: %s", self.available_instances)
 
     def update_auth_fields(self):
         """
@@ -134,7 +131,6 @@ class ConnectionConfigDialog(QDialog):
     def on_submit(self):
         """Recoge la configuración sin probar la conexión y cierra el diálogo."""
         self.result = self.get_config()
-        # Utiliza la lógica para guardar la configuración.
         if self.result.get("remember"):
             save_connection_config(self.result)
         self.accept()

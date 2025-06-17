@@ -1,6 +1,4 @@
-# query/sql.py
-
-QUERY_IMPORTACION = """
+2025-06-17 17:31:04,721 - DEBUG - importacion.py:40 - Ejecutando consulta SQL con OFFSET 0 y LIMIT 10000:
 WITH ReferenciasSinExistenciaTotal AS (
     -- Identifica referencias donde la suma de existencias en todas las tiendas es 0
     SELECT 
@@ -88,16 +86,4 @@ GROUP BY
 HAVING 
     (tbDimTiendas.dimID_Tienda <> 2003 OR SUM(tbHecInventario.Existencia) > 0)
 ORDER BY 
-    tbDimInventario.Referencia;
-"""
-
-def obtener_consulta_importacion(offset=0, limit=10000):
-    # Usa directamente la consulta por defecto
-    consulta_base = QUERY_IMPORTACION.strip().rstrip(';')
-    consulta = f"{consulta_base} LIMIT {limit} OFFSET {offset};"
-    return consulta
-
-if __name__ == "__main__":
-    consulta = obtener_consulta_importacion(offset=0, limit=10000)
-    print("Consulta generada:")
-    print(consulta)
+    tbDimInventario.Referencia LIMIT 10000 OFFSET 0;

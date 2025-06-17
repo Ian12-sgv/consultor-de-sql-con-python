@@ -1,90 +1,133 @@
-# query/consulta.py
 import pandas as pd
+import time
 from sqlalchemy import create_engine
 from urllib.parse import quote_plus
-from .sql import obtener_consulta_importacion
+from functools import lru_cache
+from query.sql import obtener_consulta_importacion
+from contextlib import contextmanager
 
-def connect_sql(config):
+# Se ha eliminado toda la configuración y llamadas a logging.
+
+@contextmanager
+def disable_logs(level=None):
     """
-    Crea y retorna un engine de SQLAlchemy para conectarse a SQL Server utilizando odbc_connect.
-    
-    Parámetros en config:
-      - login: Nombre de usuario.
-      - password: Contraseña.
-      - server_name: Nombre del servidor y la instancia en formato 'SERVIDOR\\INSTANCIA'.
-      - database: (Opcional) Nombre de la base de datos (por defecto 'BODEGA_DATOS').
+    Context manager vacío puesto que no se realizará ninguna acción de logging.
     """
-    driver = "SQL Server Native Client 11.0"  # Asegúrate de que este nombre coincide con el driver instalado
-    server = config['server_name']
-    database = config.get("database", "BODEGA_DATOS")
-    username = config['login']
-    password = config['password']
-    
-    # Forma completa de la cadena de conexión para ODBC
+    yield
+
+def _engine_cache_key(config: dict):
+    """
+    Crea una clave inmutable a partir de la configuración para cachear la conexión.
+    Se asume que los campos relevantes son: server_name, database, login y password.
+    """
+    return (
+        config.get('server_name'),
+        config.get('database', "BODEGA_DATOS"),
+        config.get('login'),
+        config.get('password')
+    )
+
+@lru_cache(maxsize=5)
+def connect_sql_cached(server_name, database, login, password):
+    """
+    Crea y retorna un engine de SQLAlchemy basado en los parámetros de conexión.
+    Se cachea este engine para evitar recrearlo si la configuración no cambia.
+    """
+    driver = "SQL Server Native Client 11.0"
     connection_string = (
         f"DRIVER={{{driver}}};"
-        f"SERVER={server};"
+        f"SERVER={server_name};"
         f"DATABASE={database};"
-        f"UID={username};"
+        f"UID={login};"
         f"PWD={password};"
         "Connection Timeout=30;"
     )
-    
-    # URL-encode de la cadena de conexión
     params = quote_plus(connection_string)
-    # Construir la URL usando odbc_connect
     connection_url = f"mssql+pyodbc:///?odbc_connect={params}"
-    
     try:
-        engine = create_engine(connection_url, pool_size=10, max_overflow=20)
+        engine = create_engine(
+            connection_url,
+            pool_size=10,
+            max_overflow=20,
+            fast_executemany=True
+        )
         return engine
     except Exception as e:
-        print(f"Error al crear el engine: {e}")
         return None
 
-def obtener_datos(config, offset=None, limit=None):
+def connect_sql(config):
     """
-    Ejecuta la consulta SQL definida en sql.py utilizando el engine creado con la configuración dada
-    y retorna un DataFrame.
+    Retorna un engine de SQLAlchemy utilizando caché.
+    """
+    key = _engine_cache_key(config)
+    engine = connect_sql_cached(*key)
+    return engine
+
+def obtener_datos(config, offset=0, limit=10000):
+    """
+    Ejecuta la consulta SQL con paginación y retorna un DataFrame con los datos obtenidos.
     
     Parámetros:
-      config (dict): Diccionario con la configuración de conexión.
-      offset (int, opcional): Número de filas a saltar (para paginación).
-      limit (int, opcional): Número máximo de filas a retornar (para paginación).
+      config (dict): Configuración de conexión.
+      offset (int): Registro inicial para la consulta.
+      limit (int): Cantidad de registros a retornar.
     
     Retorna:
-      DataFrame con los datos importados. Si ocurre un error, retorna un DataFrame vacío.
-    
-    Nota:
-      Para la paginación se asume que la consulta SQL incluye un ORDER BY.
+      DataFrame: Datos obtenidos, o uno vacío en caso de error.
     """
     engine = connect_sql(config)
     if engine is None:
         return pd.DataFrame()
-    
-    query = obtener_consulta_importacion()
-    
-    # Si se especifican valores para paginación, modifica la query
-    if offset is not None and limit is not None:
-        query += f" OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY"
-    
-    try:
-        df = pd.read_sql(query, con=engine)
-        return df
-    except Exception as e:
-        print(f"Error al ejecutar la consulta: {e}")
+
+    query = obtener_consulta_importacion(offset, limit)
+    if not query or not query.strip():
         return pd.DataFrame()
 
+    try:
+        with disable_logs():
+            inicio = time.time()
+            df = pd.read_sql(query, con=engine)
+            fin = time.time()
+        elapsed_time = fin - inicio
+        if df is None or df.empty:
+            return pd.DataFrame()
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
+def obtener_datos_por_lotes(config, total_rows, batch_size=10000):
+    """
+    Generador que extrae datos SQL en bloques y entrega cada bloque.
+    
+    Parámetros:
+      config (dict): Configuración de conexión.
+      total_rows (int): Cantidad total de registros que se desea extraer.
+      batch_size (int): Número de registros por cada bloque.
+    
+    Yields:
+      DataFrame: Bloque de datos obtenido de la consulta.
+    """
+    for offset in range(0, total_rows, batch_size):
+        df = obtener_datos(config, offset=offset, limit=batch_size)
+        if df.empty:
+            break
+        yield df
+
 if __name__ == "__main__":
-    # Configuración de ejemplo
+    # Configuración de conexión
     config = {
         'login': 'sa',
         'password': 'tu_contraseña',
         'server_name': 'MyServer\\MyInstance',
         'database': 'BODEGA_DATOS'
     }
-    
-    # Ejemplo: obtener los primeros 10,000 registros
-    df = obtener_datos(config, offset=0, limit=10000)
-    print("Datos obtenidos:")
-    print(df.head())
+
+    total_rows = 50000
+    batch_size = 10000
+
+    bloques = []
+    for df_batch in obtener_datos_por_lotes(config, total_rows, batch_size):
+        bloques.append(df_batch)
+
+    all_data = pd.concat(bloques, ignore_index=True) if bloques else pd.DataFrame()
+    print("Importación completa: {} filas obtenidas.".format(len(all_data)))
